@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors'); // Import cors
 const axios = require('axios');
 const bodyParser = require('body-parser');
 const uuid = require('uuid');
@@ -8,6 +9,8 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Use cors middleware
+app.use(cors()); // Allow all origins (or configure as needed)
 app.use(bodyParser.json());
 
 const API_BASE_URL = "https://api.cloudflare.com/client/v4/accounts/0ad971c8fdbadd821d8f90003f7b4dcd/ai/run/";
@@ -31,9 +34,9 @@ async function run(model, inputs) {
 // Clean up AI responses
 function cleanText(content) {
     return content
-        .replace(/^\*\*([^*]+)\*\*:/g, "<h2>$1:</h2>") // Convert bold titles to headings
-        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>") // Convert bold text
-        .replace(/_{1,2}([^_]+)_{1,2}/g, "<em>$1</em>") // Convert italic text
+        .replace(/^\*\*([^*]+)\*\*:/g, "<h2>$1:</h2>")
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+        .replace(/_{1,2}([^_]+)_{1,2}/g, "<em>$1</em>")
         .trim();
 }
 
