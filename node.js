@@ -1,0 +1,234 @@
+const express = require('express');
+const axios = require('axios');
+const bodyParser = require('body-parser');
+const uuid = require('uuid');
+const fs = require('fs');
+const path = require('path');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(bodyParser.json());
+
+const API_BASE_URL = "https://api.cloudflare.com/client/v4/accounts/0ad971c8fdbadd821d8f90003f7b4dcd/ai/run/";
+const HEADERS = { Authorization: "Bearer uuNs7PKQ-1jIqASmaqhcGMK7zBbiYfx8X9JJR52g" };
+const USER_REQUESTS_FILE = path.join(__dirname, "user_requests.json");
+const progressTracker = {};
+
+// Function to interact with Cloudflare AI
+async function run(model, inputs) {
+    console.log(`[INFO] Sending request to AI for model: ${model}`);
+    try {
+        const response = await axios.post(`${API_BASE_URL}${model}`, { messages: inputs }, { headers: HEADERS });
+        console.log("[INFO] AI request successful!");
+        return response.data;
+    } catch (error) {
+        console.error(`[ERROR] API request failed: ${error.message}`);
+        return null;
+    }
+}
+
+// Clean up AI responses
+function cleanText(content) {
+    return content
+        .replace(/^\*\*([^*]+)\*\*:/g, "<h2>$1:</h2>") // Convert bold titles to headings
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>") // Convert bold text
+        .replace(/_{1,2}([^_]+)_{1,2}/g, "<em>$1</em>") // Convert italic text
+        .trim();
+}
+
+// Format article content
+function formatArticleContent(content) {
+    const paragraphs = content.split("\n").filter(para => para.trim() !== "");
+    let formattedContent = "";
+
+    paragraphs.forEach(para => {
+        para = cleanText(para.trim());
+
+        if (/^(Section|Subtopic|Key|Overview|I+\.|\d+\.|[A-Z][a-zA-Z\s]+):/.test(para)) {
+            formattedContent += `<h2>${para}</h2>\n`;
+        } else if (/\b(important|key differences|summary|overview)\b/i.test(para)) {
+            formattedContent += `<strong>${para}</strong>\n`;
+        } else if (para.startsWith("-")) {
+            if (!formattedContent.endsWith("</ul>\n")) {
+                formattedContent += "<ul>\n";
+            }
+            formattedContent += `<li>${para.slice(1).trim()}</li>\n`;
+            if (para === paragraphs[paragraphs.length - 1] || !paragraphs[paragraphs.indexOf(para) + 1].startsWith("-")) {
+                formattedContent += "</ul>\n";
+            }
+        } else {
+            formattedContent += `<p>${para}</p>\n`;
+        }
+    });
+
+    return formattedContent;
+}
+
+// Get topics from AI
+async function getArticleTopics(topic) {
+    const inputs = [
+        { role: "system", content: "You are a highly skilled human-like article writer with expertise in creating engaging and informative content." },
+        { role: "user", content: `Create a detailed outline for a comprehensive article comparing ${topic}. Include a compelling title, subheadings, and a brief description for each subheading to guide the writing process.` }
+    ];
+
+    const response = await run("@cf/meta/llama-3-8b-instruct", inputs);
+    return response?.result?.response || null;
+}
+
+// Generate content for each topic
+async function generateContentForTopic(topic) {
+    const inputs = [
+        { role: "system", content: "You are a professional writer skilled in crafting human-like, engaging articles." },
+        { role: "user", content: `Write a detailed and engaging section for the topic '${topic}'. Make it informative and easy to read, incorporating relevant examples where appropriate.` }
+    ];
+
+    const response = await run("@cf/meta/llama-3-8b-instruct", inputs);
+    return response?.result?.response || null;
+}
+
+// Post the article to WordPress
+async function postToWordPress(title, content, username, password, site) {
+    console.log(`[INFO] Publishing article: '${title}' to WordPress...`);
+
+    const endpoint = `https://${site}/wp-json/wp/v2/posts`;
+
+    const post = {
+        title,
+        content,
+        status: 'publish'
+    };
+
+    const response = await axios.post(endpoint, post, {
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64')
+        }
+    });
+
+    if (response.status !== 201) {
+        console.error(`[ERROR] Failed to post to WordPress: ${response.statusText}`);
+        throw new Error("Failed to post to WordPress. Check if the site URL is valid or if the credentials are correct.");
+    }
+
+    console.log("[INFO] Article successfully posted to WordPress!");
+}
+
+// Background worker for generating article
+async function generateArticleWorker(trackingId, username, password, topic, wordCount, site) {
+    progressTracker[trackingId] = { status: "Started", percentage: 0, description: "Initializing article generation..." };
+
+    try {
+        // Step 1: Generating subtopics
+        progressTracker[trackingId].status = "Generating subtopics";
+        progressTracker[trackingId].percentage = 10;
+        progressTracker[trackingId].description = "Fetching subtopics from AI...";
+
+        const topicResponse = await getArticleTopics(topic);
+        if (topicResponse) {
+            const lines = topicResponse.split("\n");
+            const articleTitle = cleanText(lines[0]);
+            const topics = lines.slice(1).map(line => cleanText(line)).filter(Boolean);
+            let fullArticle = "";
+            let requestedTopics = 0;
+
+            // Step 2: Generating content for each subtopic
+            progressTracker[trackingId].status = "Generating content";
+            progressTracker[trackingId].percentage = 20;
+            progressTracker[trackingId].description = "Generating content for subtopics...";
+
+            for (let i = 0; i < topics.length; i++) {
+                const contentResponse = await generateContentForTopic(topics[i]);
+                if (contentResponse) {
+                    const formattedContent = formatArticleContent(contentResponse);
+                    fullArticle += `<h2>${topics[i]}</h2>\n${formattedContent}\n\n`;
+                    requestedTopics++;
+                    const currentWordCount = fullArticle.split(/\s+/).length;
+
+                    // Check if the word count meets or exceeds the user's request
+                    if (currentWordCount >= wordCount) {
+                        break; // Exit if we have enough content
+                    }
+
+                    progressTracker[trackingId].percentage = Math.min(20 + (requestedTopics / topics.length) * 50, 70);
+                    progressTracker[trackingId].description = `Generating content for ${topics[i]}...`;
+                }
+            }
+
+            // Continue generating content if needed
+            let totalWords = fullArticle.split(/\s+/).length;
+            while (totalWords < wordCount) {
+                const additionalTopic = topics[requestedTopics++];
+                const additionalContent = await generateContentForTopic(additionalTopic);
+                if (additionalContent) {
+                    const formattedContent = formatArticleContent(additionalContent);
+                    fullArticle += `<h2>${additionalTopic}</h2>\n${formattedContent}\n\n`;
+                    totalWords = fullArticle.split(/\s+/).length;
+                    progressTracker[trackingId].percentage = Math.min(70 + (totalWords / wordCount) * 30, 100);
+                    progressTracker[trackingId].description = `Adding more content for ${additionalTopic}...`;
+                } else {
+                    break; // Exit if there's no additional content
+                }
+            }
+
+            // Step 3: Publishing to WordPress
+            progressTracker[trackingId].status = "Publishing to WordPress";
+            progressTracker[trackingId].percentage = 100;
+            progressTracker[trackingId].description = "Publishing article to WordPress...";
+            await postToWordPress(articleTitle, fullArticle, username, password, site);
+            progressTracker[trackingId].status = "Completed";
+            progressTracker[trackingId].description = "Article published successfully!";
+        } else {
+            progressTracker[trackingId].status = "Failed to generate topics";
+            progressTracker[trackingId].percentage = 100;
+            progressTracker[trackingId].description = "Failed to fetch subtopics from AI.";
+        }
+    } catch (error) {
+        progressTracker[trackingId].status = `Error: ${error.message}`;
+        progressTracker[trackingId].percentage = 100;
+        progressTracker[trackingId].description = "An error occurred during article generation.";
+    }
+}
+
+// API endpoint to request article generation
+app.post('/api', async (req, res) => {
+    const { username, password, topic, word_count = 4000, site } = req.body;
+
+    if (!username || !password || !topic || !site) {
+        return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const trackingId = uuid.v4();
+    const requestData = { trackingId, username, password, topic, wordCount: word_count, site, timestamp: Date.now() };
+    saveUserRequest(requestData);
+
+    generateArticleWorker(trackingId, username, password, topic, word_count, site);
+
+    const trackingUrl = `${req.protocol}://${req.get('host')}/article/${trackingId}`;
+    return res.status(202).json({ message: "Article generation started", tracking_url: trackingUrl });
+});
+
+// Save user request to a JSON file
+function saveUserRequest(data) {
+    if (!fs.existsSync(USER_REQUESTS_FILE)) {
+        fs.writeFileSync(USER_REQUESTS_FILE, JSON.stringify([]));
+    }
+
+    const userRequests = JSON.parse(fs.readFileSync(USER_REQUESTS_FILE));
+    userRequests.push(data);
+    fs.writeFileSync(USER_REQUESTS_FILE, JSON.stringify(userRequests, null, 4));
+}
+
+// API endpoint to track article progress
+app.get('/article/:trackingId', (req, res) => {
+    const { trackingId } = req.params;
+    if (progressTracker[trackingId]) {
+        return res.json(progressTracker[trackingId]);
+    }
+    return res.status(404).json({ error: "Tracking ID not found" });
+});
+
+// Run the server
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
