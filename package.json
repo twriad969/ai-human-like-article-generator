@@ -2,7 +2,7 @@
   "name": "ai-article-publisher",
   "version": "1.0.0",
   "description": "AI-powered article generator and WordPress publisher",
-  "main": "index.js",
+  "main": "node.js",
   "scripts": {
     "start": "node node.js"
   },
