@@ -19,9 +19,7 @@ Before running the project, ensure you have the following installed:
 - A Cloudflare account with API access for AI models
 - A WordPress site with REST API enabled and user credentials
 
-## Installation
-
-1. **Clone the repository:**
+made by ronok
 
    ```bash
    git clone https://github.com/your-username/ai-article-generator.git
