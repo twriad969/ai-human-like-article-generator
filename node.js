@@ -99,6 +99,39 @@ async function generateContentForTopic(topic, userTopic) {
     return response?.result?.response || null;
 }
 
+// Check WordPress credentials by posting a demo article
+async function checkWordPressCredentials(username, password, site) {
+    const demoPost = {
+        title: "Demo Post",
+        content: "This is a demo post to verify WordPress credentials.",
+        status: 'draft',
+    };
+
+    const endpoint = `https://${site}/wp-json/wp/v2/posts`;
+    try {
+        const response = await axios.post(endpoint, demoPost, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64')
+            }
+        });
+
+        if (response.status === 201) {
+            // Optionally delete the demo post after checking
+            await axios.delete(`${endpoint}/${response.data.id}`, {
+                headers: {
+                    'Authorization': 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64'),
+                },
+            });
+            return true; // Credentials are valid
+        }
+    } catch (error) {
+        console.error(`[ERROR] WordPress credentials check failed: ${error.message}`);
+        return false; // Credentials are invalid
+    }
+    return false; // Default to false if something unexpected happens
+}
+
 // Post the article to WordPress
 async function postToWordPress(title, content, username, password, site) {
     console.log(`[INFO] Publishing article: '${title}' to WordPress...`);
@@ -135,9 +168,22 @@ async function generateArticleWorker(trackingId, username, password, topic, word
     progressTracker[trackingId] = { status: "Started", percentage: 0, description: "Initializing article generation..." };
 
     try {
-        // Step 1: Generating subtopics
-        progressTracker[trackingId].status = "Generating subtopics";
+        // Step 1: Check WordPress credentials
+        progressTracker[trackingId].status = "Checking WordPress credentials";
         progressTracker[trackingId].percentage = 10;
+        progressTracker[trackingId].description = "Verifying WordPress credentials...";
+
+        const credentialsValid = await checkWordPressCredentials(username, password, site);
+        if (!credentialsValid) {
+            progressTracker[trackingId].status = "Invalid credentials";
+            progressTracker[trackingId].percentage = 100;
+            progressTracker[trackingId].description = "Invalid WordPress credentials. Please check your username and password.";
+            return;
+        }
+
+        // Step 2: Generating subtopics
+        progressTracker[trackingId].status = "Generating subtopics";
+        progressTracker[trackingId].percentage = 20;
         progressTracker[trackingId].description = "Fetching subtopics from AI...";
 
         const topicResponse = await getArticleTopics(topic);
@@ -148,9 +194,9 @@ async function generateArticleWorker(trackingId, username, password, topic, word
             let fullArticle = "";
             let requestedTopics = 0;
 
-            // Step 2: Generating content for each subtopic
+            // Step 3: Generating content for each subtopic
             progressTracker[trackingId].status = "Generating content";
-            progressTracker[trackingId].percentage = 20;
+            progressTracker[trackingId].percentage = 30;
             progressTracker[trackingId].description = "Generating content for subtopics...";
 
             for (let i = 0; i < topics.length; i++) {
@@ -166,29 +212,10 @@ async function generateArticleWorker(trackingId, username, password, topic, word
                         break; // Exit if we have enough content
                     }
 
-                    progressTracker[trackingId].percentage = Math.min(20 + (requestedTopics / topics.length) * 50, 70);
+                    progressTracker[trackingId].percentage = Math.min(30 + (requestedTopics / topics.length) * 50, 80);
                     progressTracker[trackingId].description = `Generating content for ${topics[i]}...`;
                 }
             }
-
-            // Continue generating content if needed
-            let totalWords = fullArticle.split(/\s+/).length;
-            while (totalWords < wordCount) {
-                const additionalTopic = topics[requestedTopics++];
-                const additionalContent = await generateContentForTopic(additionalTopic, topic);
-                if (additionalContent) {
-                    const formattedContent = formatArticleContent(additionalContent);
-                    fullArticle += `<h2>${additionalTopic}</h2>\n${formattedContent}\n\n`;
-                    totalWords = fullArticle.split(/\s+/).length;
-                    progressTracker[trackingId].percentage = Math.min(70 + (totalWords / wordCount) * 30, 100);
-                    progressTracker[trackingId].description = `Adding more content for ${additionalTopic}...`;
-                } else {
-                    break; // Exit if there's no additional content
-                }
-            }
-
-            // Step 3: Adding a single conclusion
-            fullArticle += `<h2>Conclusion</h2>\n<p>Ultimately, understanding ${topic} is crucial for navigating its complexities. We hope this article has provided you with valuable insights and a clearer perspective.</p>\n`;
 
             // Step 4: Publishing to WordPress
             progressTracker[trackingId].status = "Publishing to WordPress";
