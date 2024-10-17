@@ -34,10 +34,19 @@ async function run(model, inputs) {
 // Clean up AI responses
 function cleanText(content) {
     return content
-        .replace(/^\*\*([^*]+)\*\*:/g, "<h2>$1:</h2>")
-        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-        .replace(/_{1,2}([^_]+)_{1,2}/g, "<em>$1</em>")
+        .replace(/[\*\\"`]+/g, "") // Remove unwanted characters
         .trim();
+}
+
+// Generate a more engaging and SEO-friendly title
+function generateTitle(topic) {
+    const baseTitle = `The Ultimate Showdown: ${topic.charAt(0).toUpperCase() + topic.slice(1)}`;
+    return baseTitle + " | Key Comparisons & Insights"; // Adding keywords for SEO
+}
+
+// Create a meta description
+function generateMetaDescription(topic) {
+    return `Explore an in-depth comparison of ${topic} across various platforms. Discover key features, user engagement, and more.`;
 }
 
 // Format article content
@@ -50,8 +59,6 @@ function formatArticleContent(content) {
 
         if (/^(Section|Subtopic|Key|Overview|I+\.|\d+\.|[A-Z][a-zA-Z\s]+):/.test(para)) {
             formattedContent += `<h2>${para}</h2>\n`;
-        } else if (/\b(important|key differences|summary|overview)\b/i.test(para)) {
-            formattedContent += `<strong>${para}</strong>\n`;
         } else if (para.startsWith("-")) {
             if (!formattedContent.endsWith("</ul>\n")) {
                 formattedContent += "<ul>\n";
@@ -71,19 +78,19 @@ function formatArticleContent(content) {
 // Get topics from AI
 async function getArticleTopics(topic) {
     const inputs = [
-        { role: "system", content: "You are a highly skilled human-like article writer with expertise in creating engaging and informative content." },
-        { role: "user", content: `Create a detailed outline for a comprehensive article comparing ${topic}. Include a compelling title, subheadings, and a brief description for each subheading to guide the writing process.` }
+        { role: "system", content: "You are a highly skilled article writer." },
+        { role: "user", content: `Create a detailed outline for an SEO-friendly article titled '${generateTitle(topic)}'. Include engaging subheadings and brief descriptions for each.` }
     ];
 
     const response = await run("@cf/meta/llama-3-8b-instruct", inputs);
     return response?.result?.response || null;
 }
 
-// Generate content for each topic
-async function generateContentForTopic(topic) {
+// Generate content for each topic with a focus on readability and SEO
+async function generateContentForTopic(topic, userTopic) {
     const inputs = [
-        { role: "system", content: "You are a professional writer skilled in crafting human-like, engaging articles." },
-        { role: "user", content: `Write a detailed and engaging section for the topic '${topic}'. Make it informative and easy to read, incorporating relevant examples where appropriate.` }
+        { role: "system", content: "You are a professional writer skilled in creating engaging and SEO-friendly articles." },
+        { role: "user", content: `Write a detailed and engaging section for the topic '${userTopic} - ${topic}'. Make it informative, friendly, and easy to read, using relatable examples. Include relevant keywords for SEO.` }
     ];
 
     const response = await run("@cf/meta/llama-3-8b-instruct", inputs);
@@ -99,7 +106,11 @@ async function postToWordPress(title, content, username, password, site) {
     const post = {
         title,
         content,
-        status: 'publish'
+        status: 'publish',
+        excerpt: generateMetaDescription(title), // Adding a meta description
+        meta: {
+            // Additional SEO fields can be added here
+        }
     };
 
     const response = await axios.post(endpoint, post, {
@@ -130,7 +141,7 @@ async function generateArticleWorker(trackingId, username, password, topic, word
         const topicResponse = await getArticleTopics(topic);
         if (topicResponse) {
             const lines = topicResponse.split("\n");
-            const articleTitle = cleanText(lines[0]);
+            const articleTitle = generateTitle(topic);
             const topics = lines.slice(1).map(line => cleanText(line)).filter(Boolean);
             let fullArticle = "";
             let requestedTopics = 0;
@@ -141,7 +152,7 @@ async function generateArticleWorker(trackingId, username, password, topic, word
             progressTracker[trackingId].description = "Generating content for subtopics...";
 
             for (let i = 0; i < topics.length; i++) {
-                const contentResponse = await generateContentForTopic(topics[i]);
+                const contentResponse = await generateContentForTopic(topics[i], topic);
                 if (contentResponse) {
                     const formattedContent = formatArticleContent(contentResponse);
                     fullArticle += `<h2>${topics[i]}</h2>\n${formattedContent}\n\n`;
@@ -162,7 +173,7 @@ async function generateArticleWorker(trackingId, username, password, topic, word
             let totalWords = fullArticle.split(/\s+/).length;
             while (totalWords < wordCount) {
                 const additionalTopic = topics[requestedTopics++];
-                const additionalContent = await generateContentForTopic(additionalTopic);
+                const additionalContent = await generateContentForTopic(additionalTopic, topic);
                 if (additionalContent) {
                     const formattedContent = formatArticleContent(additionalContent);
                     fullArticle += `<h2>${additionalTopic}</h2>\n${formattedContent}\n\n`;
