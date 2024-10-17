@@ -18,6 +18,10 @@ const HEADERS = { Authorization: "Bearer uuNs7PKQ-1jIqASmaqhcGMK7zBbiYfx8X9JJR52
 const USER_REQUESTS_FILE = path.join(__dirname, "user_requests.json");
 const progressTracker = {};
 
+// Default settings
+const DEFAULT_TONE = "Informal";
+const DEFAULT_MODEL = "@cf/meta/llama-3-8b-instruct";
+
 // Function to interact with Cloudflare AI
 async function run(model, inputs) {
     console.log(`[INFO] Sending request to AI for model: ${model}`);
@@ -34,18 +38,18 @@ async function run(model, inputs) {
 // Clean up AI responses
 function cleanText(content) {
     return content
-        .replace(/[\*\\"`]+/g, "") // Remove unwanted characters
+        .replace(/[\*\\"]+/g, "") // Remove unwanted characters
         .trim();
 }
 
 // Generate a SEO-friendly title based on the user topic
-async function generateTitle(topic) {
+async function generateTitle(topic, tone) {
     const inputs = [
-        { role: "system", content: "You are an expert title generator who creates engaging, SEO-friendly blog titles." },
-        { role: "user", content: `Write a blog title about '${topic}'. Provide only one option, and if the title contains any special characters (like **), ignore them.` }
+        { role: "system", content: `You are an expert title generator who creates engaging, SEO-friendly blog titles. Tone: ${tone}` },
+        { role: "user", content: `Write a blog title about '${topic}'. Provide only one option.` }
     ];
 
-    const response = await run("@cf/meta/llama-3-8b-instruct", inputs);
+    const response = await run(DEFAULT_MODEL, inputs);
     const generatedTitle = response?.result?.response || null;
 
     return generatedTitle?.replace(/[\*\*]+/g, "").trim() || `Exploring ${topic.charAt(0).toUpperCase() + topic.slice(1)}`;
@@ -78,24 +82,24 @@ function formatArticleContent(content) {
 }
 
 // Get topics from AI
-async function getArticleTopics(topic) {
+async function getArticleTopics(topic, tone) {
     const inputs = [
-        { role: "system", content: "You are a highly skilled article writer." },
+        { role: "system", content: `You are a highly skilled article writer. Tone: ${tone}` },
         { role: "user", content: `Create a detailed outline for an SEO-friendly article titled '${topic}'. Include engaging subheadings and brief descriptions for each.` }
     ];
 
-    const response = await run("@cf/meta/llama-3-8b-instruct", inputs);
+    const response = await run(DEFAULT_MODEL, inputs);
     return response?.result?.response || null;
 }
 
 // Generate content for each topic with a focus on readability and SEO
-async function generateContentForTopic(topic, userTopic) {
+async function generateContentForTopic(topic, userTopic, tone) {
     const inputs = [
-        { role: "system", content: "You are a skilled writer who creates engaging, conversational articles without robotic phrasing." },
+        { role: "system", content: `You are a skilled writer who creates engaging, conversational articles without robotic phrasing. Tone: ${tone}` },
         { role: "user", content: `Write a detailed and friendly section for the topic '${userTopic} - ${topic}'. Make it informative, relatable, and easy to read, incorporating personal examples and insights.` }
     ];
 
-    const response = await run("@cf/meta/llama-3-8b-instruct", inputs);
+    const response = await run(DEFAULT_MODEL, inputs);
     return response?.result?.response || null;
 }
 
@@ -164,7 +168,7 @@ async function postToWordPress(title, content, username, password, site) {
 }
 
 // Background worker for generating article
-async function generateArticleWorker(trackingId, username, password, topic, wordCount, site) {
+async function generateArticleWorker(trackingId, username, password, topic, wordCount, site, tone, model) {
     progressTracker[trackingId] = { status: "Started", percentage: 0, description: "Initializing article generation..." };
 
     try {
@@ -186,10 +190,10 @@ async function generateArticleWorker(trackingId, username, password, topic, word
         progressTracker[trackingId].percentage = 20;
         progressTracker[trackingId].description = "Fetching subtopics from AI...";
 
-        const topicResponse = await getArticleTopics(topic);
+        const topicResponse = await getArticleTopics(topic, tone);
         if (topicResponse) {
             const lines = topicResponse.split("\n");
-            const articleTitle = await generateTitle(topic);
+            const articleTitle = await generateTitle(topic, tone);
             const topics = lines.slice(1).map(line => cleanText(line)).filter(Boolean);
             let fullArticle = "";
             let requestedTopics = 0;
@@ -200,7 +204,7 @@ async function generateArticleWorker(trackingId, username, password, topic, word
             progressTracker[trackingId].description = "Generating content for subtopics...";
 
             for (let i = 0; i < topics.length; i++) {
-                const contentResponse = await generateContentForTopic(topics[i], topic);
+                const contentResponse = await generateContentForTopic(topics[i], topic, tone);
                 if (contentResponse) {
                     const formattedContent = formatArticleContent(contentResponse);
                     fullArticle += `<h2>${topics[i]}</h2>\n${formattedContent}\n\n`;
@@ -238,19 +242,19 @@ async function generateArticleWorker(trackingId, username, password, topic, word
 
 // API endpoint to request article generation
 app.post('/api', async (req, res) => {
-    const { username, password, topic, word_count = 4000, site } = req.body;
+    const { username, password, topic, word_count = 4000, site, tone, model } = req.body;
 
     if (!username || !password || !topic || !site) {
         return res.status(400).json({ error: "Missing required fields" });
     }
 
     const trackingId = uuid.v4();
-    const requestData = { trackingId, username, password, topic, wordCount: word_count, site, timestamp: Date.now() };
+    const requestData = { trackingId, username, password, topic, wordCount: word_count, site, tone: tone || DEFAULT_TONE, model: model || DEFAULT_MODEL, timestamp: Date.now() };
     saveUserRequest(requestData);
 
-    generateArticleWorker(trackingId, username, password, topic, word_count, site);
+    generateArticleWorker(trackingId, username, password, topic, word_count, site, tone || DEFAULT_TONE, model || DEFAULT_MODEL);
 
-    const trackingUrl = `https://tracker-three-nu.vercel.app/?articleId=${trackingId}`;
+    const trackingUrl = `https://tracker-three-nu.vercel.app/?articleid=${trackingId}`;
     return res.status(202).json({ message: "Article generation started", tracking_url: trackingUrl });
 });
 
