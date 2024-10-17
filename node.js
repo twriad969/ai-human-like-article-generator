@@ -218,7 +218,7 @@ app.post('/api', async (req, res) => {
 
     generateArticleWorker(trackingId, username, password, topic, word_count, site);
 
-    const trackingUrl = `${req.protocol}://${req.get('host')}/article/${trackingId}`;
+const trackingUrl = `https://tracker-three-nu.vercel.app/?articleid=${trackingId}`;
     return res.status(202).json({ message: "Article generation started", tracking_url: trackingUrl });
 });
 
