@@ -10,7 +10,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Use cors middleware
-app.use(cors()); // Allow all origins (or configure as needed)
+app.use(cors());
 app.use(bodyParser.json());
 
 const API_BASE_URL = "https://api.cloudflare.com/client/v4/accounts/0ad971c8fdbadd821d8f90003f7b4dcd/ai/run/";
@@ -38,15 +38,17 @@ function cleanText(content) {
         .trim();
 }
 
-// Generate a more engaging and SEO-friendly title
-function generateTitle(topic) {
-    const baseTitle = `The Ultimate Showdown: ${topic.charAt(0).toUpperCase() + topic.slice(1)}`;
-    return baseTitle + " | Key Comparisons & Insights"; // Adding keywords for SEO
-}
+// Generate a SEO-friendly title based on the user topic
+async function generateTitle(topic) {
+    const inputs = [
+        { role: "system", content: "You are an expert title generator who creates engaging, SEO-friendly blog titles." },
+        { role: "user", content: `Write a blog title about '${topic}'. Provide only one option, and if the title contains any special characters (like **), ignore them.` }
+    ];
 
-// Create a meta description
-function generateMetaDescription(topic) {
-    return `Explore an in-depth comparison of ${topic} across various platforms. Discover key features, user engagement, and more.`;
+    const response = await run("@cf/meta/llama-3-8b-instruct", inputs);
+    const generatedTitle = response?.result?.response || null;
+
+    return generatedTitle?.replace(/[\*\*]+/g, "").trim() || `Exploring ${topic.charAt(0).toUpperCase() + topic.slice(1)}`;
 }
 
 // Format article content
@@ -79,7 +81,7 @@ function formatArticleContent(content) {
 async function getArticleTopics(topic) {
     const inputs = [
         { role: "system", content: "You are a highly skilled article writer." },
-        { role: "user", content: `Create a detailed outline for an SEO-friendly article titled '${generateTitle(topic)}'. Include engaging subheadings and brief descriptions for each.` }
+        { role: "user", content: `Create a detailed outline for an SEO-friendly article titled '${topic}'. Include engaging subheadings and brief descriptions for each.` }
     ];
 
     const response = await run("@cf/meta/llama-3-8b-instruct", inputs);
@@ -89,8 +91,8 @@ async function getArticleTopics(topic) {
 // Generate content for each topic with a focus on readability and SEO
 async function generateContentForTopic(topic, userTopic) {
     const inputs = [
-        { role: "system", content: "You are a professional writer skilled in creating engaging and SEO-friendly articles." },
-        { role: "user", content: `Write a detailed and engaging section for the topic '${userTopic} - ${topic}'. Make it informative, friendly, and easy to read, using relatable examples. Include relevant keywords for SEO.` }
+        { role: "system", content: "You are a skilled writer who creates engaging, conversational articles without robotic phrasing." },
+        { role: "user", content: `Write a detailed and friendly section for the topic '${userTopic} - ${topic}'. Make it informative, relatable, and easy to read, incorporating personal examples and insights.` }
     ];
 
     const response = await run("@cf/meta/llama-3-8b-instruct", inputs);
@@ -107,7 +109,7 @@ async function postToWordPress(title, content, username, password, site) {
         title,
         content,
         status: 'publish',
-        excerpt: generateMetaDescription(title), // Adding a meta description
+        excerpt: `Explore an in-depth comparison of ${title}. Discover key features, user engagement, and more.`, // Adding a meta description
         meta: {
             // Additional SEO fields can be added here
         }
@@ -141,7 +143,7 @@ async function generateArticleWorker(trackingId, username, password, topic, word
         const topicResponse = await getArticleTopics(topic);
         if (topicResponse) {
             const lines = topicResponse.split("\n");
-            const articleTitle = generateTitle(topic);
+            const articleTitle = await generateTitle(topic);
             const topics = lines.slice(1).map(line => cleanText(line)).filter(Boolean);
             let fullArticle = "";
             let requestedTopics = 0;
@@ -185,7 +187,10 @@ async function generateArticleWorker(trackingId, username, password, topic, word
                 }
             }
 
-            // Step 3: Publishing to WordPress
+            // Step 3: Adding a single conclusion
+            fullArticle += `<h2>Conclusion</h2>\n<p>Ultimately, understanding ${topic} is crucial for navigating its complexities. We hope this article has provided you with valuable insights and a clearer perspective.</p>\n`;
+
+            // Step 4: Publishing to WordPress
             progressTracker[trackingId].status = "Publishing to WordPress";
             progressTracker[trackingId].percentage = 100;
             progressTracker[trackingId].description = "Publishing article to WordPress...";
@@ -218,7 +223,7 @@ app.post('/api', async (req, res) => {
 
     generateArticleWorker(trackingId, username, password, topic, word_count, site);
 
-const trackingUrl = `https://tracker-three-nu.vercel.app/?articleid=${trackingId}`;
+    const trackingUrl = `https://tracker-three-nu.vercel.app/?articleid=${trackingId}`;
     return res.status(202).json({ message: "Article generation started", tracking_url: trackingUrl });
 });
 
